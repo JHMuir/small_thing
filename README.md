@@ -1,30 +1,19 @@
 ```
-# Display results
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+def generate_character_response(model, tokenizer, prompt, max_length=100):
+    """
+    Generate text in the character's voice.
+    """
+    # Convert the prompt text to token IDs
+    model.eval()
+    inputs = tokenizer(prompt, return_tensors='pt', padding=True, truncation=True, max_length=512)
     
-    # Show the image
-    axes[0].imshow(img)
-    axes[0].set_title("Input Image", fontsize=12)
-    axes[0].axis('off')
+    # Moving the input for the GPU used during training
+    device = next(model.parameters()).device
+    input_ids = inputs['input_ids'].to(device)
+    attention_mask = inputs['attention_mask'].to(device)
     
-    # Show predictions as bar chart
-    species = [class_names[i][:20] for i in top_indices]  # Truncate long names
-    probs = [predictions[0][i] * 100 for i in top_indices]
-    colors = ['green' if i == 0 else 'steelblue' for i in range(len(species))]
-    
-    axes[1].barh(range(len(species)), probs, color=colors)
-    axes[1].set_yticks(range(len(species)))
-    axes[1].set_yticklabels(species)
-    axes[1].set_xlabel('Confidence (%)')
-    axes[1].set_title('Top Predictions', fontsize=12)
-    axes[1].invert_yaxis()
-    
-    plt.tight_layout()
-    plt.show()
-```
-
-
-```
+    # Generate text
+    # We use several parameters to control the generation:
     with torch.no_grad():
         output = model.generate(
             input_ids,
