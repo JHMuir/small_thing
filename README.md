@@ -1,41 +1,41 @@
-```
-def generate_character_response(model, tokenizer, prompt, max_length=100):
-    """
-    Generate text in the character's voice.
-    """
-    # Convert the prompt text to token IDs
-    model.eval()
-    inputs = tokenizer(prompt, return_tensors='pt', padding=True, truncation=True, max_length=512)
-    
-    # Moving the input for the GPU used during training
-    device = next(model.parameters()).device
-    input_ids = inputs['input_ids'].to(device)
-    attention_mask = inputs['attention_mask'].to(device)
-    
-    # Generate text
-    # We use several parameters to control the generation:
-    with torch.no_grad():
-        output = model.generate(
-            input_ids,
-            attention_mask=attention_mask,
-            max_new_tokens=max_length,          # Maximum total length including prompt
-            num_return_sequences=1,          # Generate one response
-            no_repeat_ngram_size=3,         # Don't repeat the same 2-word phrases
-            do_sample=True,                  # Use sampling instead of always picking most likely
-            top_k=50,                        # Only consider the top 50 most likely next tokens
-            top_p=0.92,                      # Use nucleus sampling (cumulative probability)
-            temperature=0.8,                 # Control randomness (higher = more random)
-            pad_token_id=tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            early_stopping=True
-        )
-    
-    # Convert the tokens back to text
-    generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
-    
-    # Remove the prompt from the output to show only generated text
-    if generated_text.startswith(prompt):
-        generated_text = generated_text[len(prompt):].strip()
-    
-    return generated_text
+```import keras            # High Level ML Package
+import tensorflow       # Low Level ML Package
+import numpy            # Helps us do fancy math
+import matplotlib
+
+numpy.set_printoptions(linewidth=200, threshold=1000)
+# Keras -> Tensorflow -> PC 
+
+# Step 1: Data Pre-Processing 
+dataset = keras.datasets.mnist
+
+(x_train, y_train), (x_test, y_test) = dataset.load_data()
+print(x_train[19])
+print(y_train[19])
+# matplotlib.pyplot.imshow(x_train[19], cmap=matplotlib.pyplot.cm.binary)
+# matplotlib.pyplot.show()
+
+x_train = keras.utils.normalize(x_train, axis=1)
+x_test = keras.utils.normalize(x_test, axis=1)
+print(x_train[19])
+print(y_train[19])
+
+# Step 2: Training -> Model
+model = keras.models.Sequential()
+
+# Input Layer
+model.add(keras.layers.Flatten()) # 2D -> 1D: 728 neurons 
+
+# Hidden Layers
+model.add(keras.layers.Dense(128, activation="relu"))
+model.add(keras.layers.Dense(128, activation="relu"))
+
+# Output Layers
+
+model.add(keras.layers.Dense(10, activation="softmax"))
+
+model.compile() # Setting it up
+model.fit()     # Training! 
+
+# Step 3: Inferencing (Using It) 
 ```
