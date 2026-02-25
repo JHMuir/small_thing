@@ -1,3 +1,4 @@
+```
 def prepare_training_data(dialogue_list, output_file='character_dialogue.txt', min_dataset_size=500):
     """
     Prepare the dialogue for training with aggressive cleaning.
@@ -63,3 +64,4 @@ def prepare_training_data(dialogue_list, output_file='character_dialogue.txt', m
     
     
     return output_file
+```
