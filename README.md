@@ -1,67 +1,130 @@
 ```
-def prepare_training_data(dialogue_list, output_file='character_dialogue.txt', min_dataset_size=500):
+def create_dataset(file_path, tokenizer, block_size=128):
     """
-    Prepare the dialogue for training with aggressive cleaning.
+    Convert our text file into a format the model can train on.
+    
+    The TextDataset class handles reading the file, tokenizing it, and breaking
+    it into chunks of the right size. The block_size parameter controls how many
+    tokens each training example contains - we use 128 because it's long enough
+    to capture context but short enough to train quickly.
     """
-    cleaned_lines = []
+    dataset = transformers.TextDataset(
+        tokenizer=tokenizer,
+        file_path=file_path,
+        block_size=block_size  # How many tokens per training example
+    )
     
-    for line in dialogue_list:
-        if not line or not isinstance(line, str):
-            continue
-            
-        # Remove only the most problematic characters, keep readable text
-        line = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', line)  # Remove control characters
-        line = re.sub(r'[^\x20-\x7e]', '', line)  # Keep printable ASCII
-        
-        # Remove script artifacts
-        line = re.sub(r'\[.*?\]', '', line)  # Remove stage directions
-        line = re.sub(r'\(.*?\)', '', line)  # Remove parenthetical notes
-        
-        # Clean up whitespace and punctuation
-        line = ' '.join(line.split())  # Normalize whitespace
-        line = re.sub(r'([.!?]){3,}', r'\1\1', line)  # Limit repeated punctuation
-        
-        line = line.strip()
-        
-        # Keep lines that have reasonable content
-        if len(line) < 3:
-            continue
-            
-        # Check if the line has enough actual words
-        words = line.split()
-        if len(words) < 2:
-            continue
-            
-        cleaned_lines.append(line)
+    # This data collator handles batching and creating the input/target pairs
+    # For language modeling, the target is just the input shifted by one token
+    data_collator = transformers.DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False  # mlm=False means we're doing causal language modeling (predicting next word)
+    )
     
-    # Data augmentation for small datasets
-    if len(cleaned_lines) < min_dataset_size:
-        print(f"Augmenting dataset from {len(cleaned_lines)} to ~{min_dataset_size} lines...")
-        augmented_lines = cleaned_lines.copy()
+    return dataset, data_collator
+
+def fine_tune_model(model, tokenizer, train_dataset, data_collator, output_dir='character_model', dataset_size=None):
+    """
+    Fine-tune the model on our character's dialogue.
+    """
+    if dataset_size and dataset_size < 200:
+        num_epochs = 20  # More epochs for very small datasets
+        learning_rate = 2e-5  # Lower learning rate
+    elif dataset_size and dataset_size < 500:
+        num_epochs = 15
+        learning_rate = 3e-5
+    else:
+        num_epochs = 10
+        learning_rate = 5e-5
         
-        # Create variations by combining consecutive lines
-        for i in range(len(cleaned_lines) - 1):
-            if random.random() < 0.5:  # 50% chance to combine
-                combined = f"{cleaned_lines[i]} {cleaned_lines[i+1]}"
-                if len(combined) < 200:  # Don't create overly long lines
-                    augmented_lines.append(combined)
+    # Training arguments control how the training process works
+    training_args = transformers.TrainingArguments(
+        output_dir=output_dir,           # Where to save the fine-tuned model
+        overwrite_output_dir=True,       # Overwrite if directory exists
+        num_train_epochs=num_epochs,     # How many times to go through the data
+        per_device_train_batch_size=2,   # How many examples to process at once
+        gradient_accumulation_steps=2,   # Accumulate gradients
+        save_steps=500,                  # Save a checkpoint every 500 steps
+        save_total_limit=2,              # Only keep the 2 most recent checkpoints
+        logging_steps=50,                # Print progress every 100 steps
+        learning_rate=learning_rate,     # How fast the model learns (smaller = more careful)
+        warmup_steps=100,                # Gradually increase learning rate at start
+        weight_decay=0.01,               # Add weight decay for regularization
+    )
+    
+    # The Trainer handles all the complex training loop for us
+    trainer = transformers.Trainer(
+        model=model,
+        args=training_args,
+        data_collator=data_collator,
+        train_dataset=train_dataset,
+    )
+    
+    # This is where the actual training happens
+    print(f"\nStarting fine-tuning with {num_epochs} epochs...")
+    trainer.train()
         
-        # Add lines multiple times with slight variations
-        while len(augmented_lines) < min_dataset_size and len(cleaned_lines) > 0:
-            line = random.choice(cleaned_lines)
-            augmented_lines.append(line)
-            
-        cleaned_lines = augmented_lines[:min_dataset_size]
+    # Save the final model and tokenizer
+    trainer.save_model(output_dir)
+    tokenizer.save_pretrained(output_dir)
     
-    # Write to file with proper formatting
-    with open(output_file, 'w', encoding='utf-8') as f:
-        for line in cleaned_lines:
-            # Add the end-of-text token for GPT-2
-            f.write(f"{line}\n")
+    return model, tokenizer
+
+def generate_character_response(model, tokenizer, prompt, max_length=100):
+    """
+    Generate text in the character's voice.
+    """
+    # Convert the prompt text to token IDs
+    model.eval()
+    inputs = tokenizer(prompt, return_tensors='pt', padding=True, truncation=True, max_length=512)
     
-    print(f"Training data saved to {output_file}")
-    print(f"Total lines: {len(cleaned_lines)}")
+    # Moving the input for the GPU used during training
+    device = next(model.parameters()).device
+    input_ids = inputs['input_ids'].to(device)
+    attention_mask = inputs['attention_mask'].to(device)
     
+    # Generate text
+    # We use several parameters to control the generation:
+    with torch.no_grad():
+        output = model.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_length,          # Maximum total length including prompt
+            num_return_sequences=1,          # Generate one response
+            no_repeat_ngram_size=3,         # Don't repeat the same 2-word phrases
+            do_sample=True,                  # Use sampling instead of always picking most likely
+            top_k=50,                        # Only consider the top 50 most likely next tokens
+            top_p=0.92,                      # Use nucleus sampling (cumulative probability)
+            temperature=0.8,                 # Control randomness (higher = more random)
+            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            early_stopping=True
+        )
     
-    return output_file
+    # Convert the tokens back to text
+    generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
+    
+    # Remove the prompt from the output to show only generated text
+    if generated_text.startswith(prompt):
+        generated_text = generated_text[len(prompt):].strip()
+    
+    return generated_text
+
+def interactive_generation(model, tokenizer):
+    """
+    Let the user have a conversation with the character model.
+    """
+    print("Type a prompt and see what your character says!")
+    print("Type 'quit' to exit\n\n")
+    
+    while True:
+        user_input = input("Your prompt: ")
+        
+        if user_input.lower() == 'quit':
+            print("Quitting...\n\n")
+            break
+        
+        print("\nGenerating response...\n")
+        response = generate_character_response(model, tokenizer, user_input, max_length=60)
+        print(f"Character says: {response}\n")
 ```
